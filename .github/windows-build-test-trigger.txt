@@ -1,1 +1,1 @@
-Windows build verification, pass 1 (LLVM cache populate, diagnostics, Discord).
+Windows build verification, pass 2 (LLVM cache hit, fourth release, retention cleanup).
