@@ -1,1 +1,1 @@
-Attempt force-cancel for orphaned workflow run 43197649420 using scheduler's YAPFAST_TOKEN.
+Retry orphaned run force-cancel with GITHUB_TOKEN that has Actions:write.
