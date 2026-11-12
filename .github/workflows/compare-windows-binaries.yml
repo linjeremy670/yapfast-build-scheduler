@@ -1,0 +1,85 @@
+name: Compare Windows Binaries
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/compare-windows-binaries.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: linjeremy670/yapfast
+      OLD_TAG: windows-fcdaae470e8e00890a0e5d47e0f3f5d853dea160-43200020235-1
+      NEW_TAG: windows-fcdaae470e8e00890a0e5d47e0f3f5d853dea160-43226864330-1
+    steps:
+      - name: Download two successful Windows releases
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p old new
+          gh release download "$OLD_TAG" --repo "$GH_REPO" --pattern 'yapfast-windows-x64.exe' --dir old
+          gh release download "$NEW_TAG" --repo "$GH_REPO" --pattern 'yapfast-windows-x64.exe' --dir new
+      - name: Compare PE binaries byte by byte
+        shell: python
+        run: |
+          import hashlib
+          import os
+          import struct
+
+          first = 'old/yapfast-windows-x64.exe'
+          second = 'new/yapfast-windows-x64.exe'
+          block_size = 1024 * 1024
+          diff_count = 0
+          first_offsets = []
+          with open(first, 'rb') as a, open(second, 'rb') as b:
+              offset = 0
+              while True:
+                  left, right = a.read(block_size), b.read(block_size)
+                  if not left and not right:
+                      break
+                  if left != right:
+                      for i, (x, y) in enumerate(zip(left, right)):
+                          if x != y:
+                              diff_count += 1
+                              if len(first_offsets) < 20:
+                                  first_offsets.append(offset + i)
+                      diff_count += abs(len(left) - len(right))
+                  offset += max(len(left), len(right))
+          def digest(path):
+              h = hashlib.sha256()
+              with open(path, 'rb') as f:
+                  for chunk in iter(lambda: f.read(block_size), b''):
+                      h.update(chunk)
+              return h.hexdigest()
+          def pe_timestamp(path):
+              with open(path, 'rb') as f:
+                  header = f.read(256)
+                  if header[:2] != b'MZ':
+                      return 'not a PE file'
+                  pe = struct.unpack_from('<I', header, 60)[0]
+                  f.seek(pe + 8)
+                  return struct.unpack('<I', f.read(4))[0]
+          result = [
+              '# Windows binary reproducibility comparison',
+              f'- Old tag: {os.environ["OLD_TAG"]}',
+              f'- New tag: {os.environ["NEW_TAG"]}',
+              f'- Old size: {os.path.getsize(first)} bytes',
+              f'- New size: {os.path.getsize(second)} bytes',
+              f'- Old SHA256: {digest(first)}',
+              f'- New SHA256: {digest(second)}',
+              f'- Differing bytes: {diff_count}',
+              f'- First differing offsets: {first_offsets}',
+              f'- Old PE COFF timestamp: {pe_timestamp(first)}',
+              f'- New PE COFF timestamp: {pe_timestamp(second)}',
+          ]
+          summary = '\\n'.join(result) + '\\n'
+          print(summary)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as f:
+              f.write(summary)
