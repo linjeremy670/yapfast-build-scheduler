@@ -1,0 +1,35 @@
+name: Validate Windows Workflows
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/**'
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout scheduler workflows
+        uses: actions/checkout@v4
+        with:
+          path: scheduler
+      - name: Checkout Windows reusable workflow
+        uses: actions/checkout@v4
+        with:
+          repository: linjeremy670/yapfast
+          ref: automation/windows-build
+          path: yapfast
+      - name: Validate GitHub Actions YAML and expressions
+        shell: bash
+        run: |
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 \
+            -color \
+            scheduler/.github/workflows/windows.yml \
+            scheduler/.github/workflows/runner-health.yml \
+            scheduler/.github/workflows/validate-windows-workflows.yml \
+            yapfast/.github/workflows/sync-and-build-windows-maybe-idk.yml
