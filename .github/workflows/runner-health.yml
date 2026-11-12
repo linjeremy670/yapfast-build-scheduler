@@ -1,0 +1,23 @@
+name: Windows Runner Health
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report runner environment
+        shell: pwsh
+        run: |
+          Write-Host "Runner OS: $env:RUNNER_OS"
+          Write-Host "Runner image: $env:ImageOS $env:ImageVersion"
+          Write-Host "PowerShell: $($PSVersionTable.PSVersion)"
+          Write-Host "GitHub repository: $env:GITHUB_REPOSITORY"
+          Write-Host "Runner name: $env:RUNNER_NAME"
+          Get-Command git, cargo, rustc -ErrorAction SilentlyContinue |
+            Select-Object Name, Source | Format-Table -AutoSize
