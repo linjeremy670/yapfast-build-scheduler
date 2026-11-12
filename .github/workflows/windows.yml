@@ -13,10 +13,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: yapfast-windows-scheduler
-  cancel-in-progress: false
-
 jobs:
   build:
     uses: linjeremy670/yapfast/.github/workflows/sync-and-build-windows-maybe-idk.yml@automation/windows-build
