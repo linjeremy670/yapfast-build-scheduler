@@ -6,12 +6,14 @@ import os
 import re
 from collections import Counter
 from datetime import datetime, timedelta, timezone
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 SCHEDULER = "linjeremy670/yapfast-build-scheduler"
 YAPFAST = "linjeremy670/yapfast"
 RELEASE_TAG = re.compile(r"windows-([0-9a-f]{40})-[0-9]+-[0-9]+$")
 RELEASE_ASSETS = {"yapfast-windows-x64.exe", "SHA256SUMS"}
+LEGACY_ORPHAN_RUN = 43197649420
 
 
 def github_data(path: str) -> dict:
@@ -95,7 +97,8 @@ def check_problems(data: dict) -> list[str]:
     if not data["latest"] or data["main"] not in data["latest"]["tag_name"]:
         problems.append("Current fork main lacks a matching complete Windows release")
     for run in get_stale_runs(data["scheduler"] + data["yapfast"], now):
-        problems.append(f"Queued for over 90 minutes: {run['html_url']}")
+        if run["id"] != LEGACY_ORPHAN_RUN:
+            problems.append(f"Queued for over 90 minutes: {run['html_url']}")
     return problems
 
 
@@ -115,6 +118,8 @@ def report(data: dict, problems: list[str]) -> str:
         f"({data['cache']['active_caches_count']} caches) | Artifacts: {data['artifacts']}",
     ]
     lines.extend(f"Warning: {problem}" for problem in problems)
+    if any(run["id"] == LEGACY_ORPHAN_RUN for run in data["scheduler"]):
+        lines.append("Note: An old canceled-workflow orphan remains queued (GitHub returns HTTP 409); no job is running.")
     lines.append(f"Actions: https://github.com/{SCHEDULER}/actions")
     return "\n".join(lines)
 
@@ -136,6 +141,8 @@ def post_discord(message: str) -> None:
     try:
         with urlopen(request, timeout=15):
             pass
+    except HTTPError as error:
+        print(f"::warning::Discord builder health webhook returned HTTP {error.code}")
     except Exception as error:
         print(f"::warning::Unable to send Discord builder health summary: {type(error).__name__}")
 
