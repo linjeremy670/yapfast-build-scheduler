@@ -27,8 +27,9 @@ jobs:
           gh release download "$OLD_TAG" --repo "$GH_REPO" --pattern 'yapfast-windows-x64.exe' --dir old
           gh release download "$NEW_TAG" --repo "$GH_REPO" --pattern 'yapfast-windows-x64.exe' --dir new
       - name: Compare PE binaries byte by byte
-        shell: python
+        shell: bash
         run: |
+          python3 - <<'PY'
           import hashlib
           import os
           import struct
@@ -83,3 +84,4 @@ jobs:
           print(summary)
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as f:
               f.write(summary)
+          PY
