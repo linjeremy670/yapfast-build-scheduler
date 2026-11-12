@@ -17,11 +17,11 @@ jobs:
     steps:
       - name: Force-cancel orphaned run
         env:
-          GH_TOKEN: ${{ secrets.YAPFAST_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           if [ -z "$GH_TOKEN" ]; then
-            echo "YAPFAST_TOKEN is not available."
+            echo "GITHUB_TOKEN is not available."
             exit 1
           fi
           gh api -X POST \
