@@ -1,1 +1,0 @@
-Retry orphaned run force-cancel with GITHUB_TOKEN that has Actions:write.
