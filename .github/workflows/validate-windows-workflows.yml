@@ -48,7 +48,6 @@ jobs:
             scheduler/.github/workflows/validate-windows-workflows.yml \
             scheduler/.github/workflows/compare-windows-binaries.yml \
             scheduler/.github/workflows/builder-health.yml \
-            scheduler/.github/workflows/cleanup-old-runs.yml \
             yapfast/.github/workflows/sync-and-build-windows-maybe-idk.yml
       - name: Compile-check health summary
         run: python3 -m py_compile scheduler/scripts/builder_health.py

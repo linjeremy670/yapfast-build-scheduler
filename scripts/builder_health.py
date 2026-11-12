@@ -137,7 +137,11 @@ def post_discord(message: str) -> None:
         print("::warning::DISCORD_WEBHOOK_URL not set; GitHub summary only")
         return
     body = json.dumps({"content": message[:1900], "allowed_mentions": {"parse": []}}).encode()
-    request = Request(webhook, data=body, headers={"Content-Type": "application/json"})
+    request = Request(webhook, data=body, headers={
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": "DiscordBot (https://github.com/linjeremy670/yapfast-build-scheduler, 1.0)",
+    })
     try:
         with urlopen(request, timeout=15):
             pass
