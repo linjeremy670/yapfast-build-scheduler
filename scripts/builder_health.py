@@ -107,7 +107,7 @@ def report(data: dict, problems: list[str]) -> str:
     latest_sha = release["tag_name"].split("-")[1][:8] if release else "none"
     lines = [
         f"**Yapfast Windows builder: {status}** ({data['now']:%Y-%m-%d} UTC)",
-        f"Fork main: \`{data['main'][:8]}\` | Latest complete release: \`{latest_sha}\`",
+        f"Fork main: `{data['main'][:8]}` | Latest complete release: `{latest_sha}`",
         f"Past 24h: {counts['Yapfast Windows Scheduler']} scheduler checks, "
         f"{data['new_releases']} complete release(s), "
         f"{counts['Validate Windows Workflows']} validation(s), {len(failures)} failed run(s)",

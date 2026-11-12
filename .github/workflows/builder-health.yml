@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '15 9 * * *'
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/builder-health.yml'
+      - 'scripts/builder_health.py'
 
 permissions:
   contents: read
