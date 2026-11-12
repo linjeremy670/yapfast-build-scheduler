@@ -2,6 +2,8 @@ name: Validate Windows Workflows
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '15 4 * * *'
   push:
     paths:
       - '.github/workflows/**'
@@ -15,11 +17,11 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout scheduler workflows
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           path: scheduler
       - name: Checkout Windows reusable workflow
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: linjeremy670/yapfast
           ref: automation/windows-build
