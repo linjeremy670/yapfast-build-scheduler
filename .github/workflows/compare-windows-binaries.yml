@@ -2,9 +2,15 @@ name: Compare Windows Binaries
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - '.github/workflows/compare-windows-binaries.yml'
+    inputs:
+      old_tag:
+        description: Optional older complete Windows release tag
+        type: string
+        required: false
+      new_tag:
+        description: Optional newer complete Windows release tag
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -16,16 +22,37 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: linjeremy670/yapfast
-      OLD_TAG: windows-fcdaae470e8e00890a0e5d47e0f3f5d853dea160-43200020235-1
-      NEW_TAG: windows-fcdaae470e8e00890a0e5d47e0f3f5d853dea160-43226864330-1
+      OLD_TAG_OVERRIDE: ${{ inputs.old_tag }}
+      NEW_TAG_OVERRIDE: ${{ inputs.new_tag }}
     steps:
-      - name: Download two successful Windows releases
+      - name: Resolve two complete retained Windows releases
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
+            --jq '.[] | select(.tag_name | test("^windows-[0-9a-f]{40}-[0-9]+-[0-9]+$")) | select((([.assets[].name] | index("yapfast-windows-x64.exe")) != null) and (([.assets[].name] | index("SHA256SUMS")) != null)) | [.published_at, .tag_name] | @tsv' \
+            > complete-releases.tsv
+          mapfile -t tags < <(sort -r -k1,1 complete-releases.tsv | cut -f2)
+          old_tag="$OLD_TAG_OVERRIDE"
+          new_tag="$NEW_TAG_OVERRIDE"
+          if [[ -z "$new_tag" ]]; then new_tag="${tags[0]:-}"; fi
+          if [[ -z "$old_tag" ]]; then old_tag="${tags[1]:-}"; fi
+          if [[ -z "$new_tag" || -z "$old_tag" || "$old_tag" == "$new_tag" ]]; then
+            echo "::error::Need two different complete Windows releases (or supply explicit tags)."
+            exit 1
+          fi
+          echo "OLD_TAG=$old_tag" >> "$GITHUB_ENV"
+          echo "NEW_TAG=$new_tag" >> "$GITHUB_ENV"
+          echo "Comparing $old_tag to $new_tag"
+      - name: Download and verify release executables
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p old new
-          gh release download "$OLD_TAG" --repo "$GH_REPO" --pattern 'yapfast-windows-x64.exe' --dir old
-          gh release download "$NEW_TAG" --repo "$GH_REPO" --pattern 'yapfast-windows-x64.exe' --dir new
+          gh release download "$OLD_TAG" --repo "$GH_REPO" --pattern 'yapfast-windows-x64.exe' --pattern 'SHA256SUMS' --dir old
+          gh release download "$NEW_TAG" --repo "$GH_REPO" --pattern 'yapfast-windows-x64.exe' --pattern 'SHA256SUMS' --dir new
+          (cd old && sha256sum --check SHA256SUMS)
+          (cd new && sha256sum --check SHA256SUMS)
       - name: Compare PE binaries byte by byte
         shell: bash
         run: |
@@ -34,54 +61,59 @@ jobs:
           import os
           import struct
 
-          first = 'old/yapfast-windows-x64.exe'
-          second = 'new/yapfast-windows-x64.exe'
-          block_size = 1024 * 1024
-          diff_count = 0
-          first_offsets = []
-          with open(first, 'rb') as a, open(second, 'rb') as b:
-              offset = 0
-              while True:
-                  left, right = a.read(block_size), b.read(block_size)
-                  if not left and not right:
-                      break
-                  if left != right:
-                      for i, (x, y) in enumerate(zip(left, right)):
-                          if x != y:
-                              diff_count += 1
-                              if len(first_offsets) < 20:
-                                  first_offsets.append(offset + i)
-                      diff_count += abs(len(left) - len(right))
-                  offset += max(len(left), len(right))
+          OLD = 'old/yapfast-windows-x64.exe'
+          NEW = 'new/yapfast-windows-x64.exe'
+          BLOCK = 1024 * 1024
+
           def digest(path):
-              h = hashlib.sha256()
-              with open(path, 'rb') as f:
-                  for chunk in iter(lambda: f.read(block_size), b''):
-                      h.update(chunk)
-              return h.hexdigest()
+              hasher = hashlib.sha256()
+              with open(path, 'rb') as stream:
+                  for data in iter(lambda: stream.read(BLOCK), b''):
+                      hasher.update(data)
+              return hasher.hexdigest()
+
           def pe_timestamp(path):
-              with open(path, 'rb') as f:
-                  header = f.read(256)
+              with open(path, 'rb') as stream:
+                  header = stream.read(64)
                   if header[:2] != b'MZ':
-                      return 'not a PE file'
-                  pe = struct.unpack_from('<I', header, 60)[0]
-                  f.seek(pe + 8)
-                  return struct.unpack('<I', f.read(4))[0]
-          result = [
+                      return 'not a PE executable'
+                  offset = struct.unpack_from('<I', header, 60)[0]
+                  stream.seek(offset + 8)
+                  return struct.unpack('<I', stream.read(4))[0]
+
+          def differences(first, second):
+              count, offsets, position = 0, [], 0
+              with open(first, 'rb') as left, open(second, 'rb') as right:
+                  while True:
+                      a, b = left.read(BLOCK), right.read(BLOCK)
+                      if not a and not b:
+                          break
+                      if a != b:
+                          for index, (x, y) in enumerate(zip(a, b)):
+                              if x != y:
+                                  count += 1
+                                  if len(offsets) < 20:
+                                      offsets.append(position + index)
+                          count += abs(len(a) - len(b))
+                      position += max(len(a), len(b))
+              return count, offsets
+
+          diff_count, offsets = differences(OLD, NEW)
+          lines = [
               '# Windows binary reproducibility comparison',
               f'- Old tag: {os.environ["OLD_TAG"]}',
               f'- New tag: {os.environ["NEW_TAG"]}',
-              f'- Old size: {os.path.getsize(first)} bytes',
-              f'- New size: {os.path.getsize(second)} bytes',
-              f'- Old SHA256: {digest(first)}',
-              f'- New SHA256: {digest(second)}',
-              f'- Differing bytes: {diff_count}',
-              f'- First differing offsets: {first_offsets}',
-              f'- Old PE COFF timestamp: {pe_timestamp(first)}',
-              f'- New PE COFF timestamp: {pe_timestamp(second)}',
+              f'- Old size: {os.path.getsize(OLD):,} bytes',
+              f'- New size: {os.path.getsize(NEW):,} bytes',
+              f'- Old SHA256: {digest(OLD)}',
+              f'- New SHA256: {digest(NEW)}',
+              f'- Differing bytes: {diff_count:,}',
+              f'- First differing offsets: {offsets}',
+              f'- Old PE timestamp: {pe_timestamp(OLD)}',
+              f'- New PE timestamp: {pe_timestamp(NEW)}',
           ]
-          summary = '\\n'.join(result) + '\\n'
+          summary = '\n'.join(lines) + '\n'
           print(summary)
-          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as f:
-              f.write(summary)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as stream:
+              stream.write(summary)
           PY

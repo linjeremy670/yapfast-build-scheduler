@@ -13,6 +13,11 @@ on:
 permissions:
   contents: read
 
+# Only one scheduler invocation runs at once; later runs recheck releases.
+concurrency:
+  group: yapfast-windows-scheduler
+  cancel-in-progress: false
+
 jobs:
   build:
     uses: linjeremy670/yapfast/.github/workflows/sync-and-build-windows-maybe-idk.yml@automation/windows-build

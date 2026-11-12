@@ -1,0 +1,70 @@
+name: Cleanup Obsolete Yapfast Runs
+
+# One-time cleanup on creation; can be manually rerun if needed.
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/cleanup-old-runs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Cancel stale queued scheduler run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          id=43197649420
+          state=$(gh api "repos/$repo/actions/runs/$id" --jq '.status' || true)
+          if [[ "$state" == "queued" ]]; then
+            echo "Canceling queued run $id"
+            gh api -X POST "repos/$repo/actions/runs/$id/cancel" || true
+            sleep 5
+            state=$(gh api "repos/$repo/actions/runs/$id" --jq '.status' || true)
+            if [[ "$state" == "queued" ]]; then
+              gh api -X POST "repos/$repo/actions/runs/$id/force-cancel" || true
+            fi
+          fi
+          echo "Stale run $id status: $state" >> "$GITHUB_STEP_SUMMARY"
+      - name: Remove completed failures from superseded scheduler workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          for id in 43227566602 43227419918 43223703891 43184324080; do
+            state=$(gh api "repos/$repo/actions/runs/$id" --jq '.status + ":" + (.conclusion // "")' || true)
+            if [[ "$state" == "completed:failure" || "$state" == "completed:startup_failure" ]]; then
+              gh api -X DELETE "repos/$repo/actions/runs/$id"
+              echo "Removed obsolete scheduler failure $id" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+      - name: Remove completed failures from retired Yapfast workflows
+        env:
+          GH_TOKEN: ${{ secrets.YAPFAST_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo "::warning::YAPFAST_TOKEN missing; fork cleanup skipped"
+            exit 0
+          fi
+          repo="linjeremy670/yapfast"
+          for id in 43206769751 43197430551 43183428935 43183405865 43183386429 43176893706 43176240258 43176197435 43172050456 43124126700; do
+            state=$(gh api "repos/$repo/actions/runs/$id" --jq '.status + ":" + (.conclusion // "")' || true)
+            if [[ "$state" == "completed:failure" || "$state" == "completed:startup_failure" ]]; then
+              gh api -X DELETE "repos/$repo/actions/runs/$id"
+              echo "Removed superseded Yapfast failure $id" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done

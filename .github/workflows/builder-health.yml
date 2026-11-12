@@ -1,0 +1,26 @@
+name: Daily Yapfast Builder Health
+
+on:
+  schedule:
+    - cron: '15 9 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yapfast-builder-health
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout health reporter
+        uses: actions/checkout@v5
+      - name: Audit scheduler, releases and storage
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python3 scripts/builder_health.py

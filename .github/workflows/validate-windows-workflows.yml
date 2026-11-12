@@ -5,11 +5,23 @@ on:
   schedule:
     - cron: '15 4 * * *'
   push:
+    branches: [main]
     paths:
       - '.github/workflows/**'
+      - 'scripts/builder_health.py'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - 'scripts/builder_health.py'
 
 permissions:
   contents: read
+
+# Collapse rapid successive edits without skipping checks on the newest commit.
+concurrency:
+  group: validate-windows-workflows-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   actionlint:
@@ -34,4 +46,9 @@ jobs:
             scheduler/.github/workflows/windows.yml \
             scheduler/.github/workflows/runner-health.yml \
             scheduler/.github/workflows/validate-windows-workflows.yml \
+            scheduler/.github/workflows/compare-windows-binaries.yml \
+            scheduler/.github/workflows/builder-health.yml \
+            scheduler/.github/workflows/cleanup-old-runs.yml \
             yapfast/.github/workflows/sync-and-build-windows-maybe-idk.yml
+      - name: Compile-check health summary
+        run: python3 -m py_compile scheduler/scripts/builder_health.py
