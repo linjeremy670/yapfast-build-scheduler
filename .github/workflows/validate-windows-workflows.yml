@@ -33,5 +33,6 @@ jobs:
             -color \
             scheduler/.github/workflows/windows.yml \
             scheduler/.github/workflows/runner-health.yml \
+            scheduler/.github/workflows/windows-build-verification.yml \
             scheduler/.github/workflows/validate-windows-workflows.yml \
             yapfast/.github/workflows/sync-and-build-windows-maybe-idk.yml
