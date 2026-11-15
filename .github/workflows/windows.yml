@@ -2,7 +2,7 @@ name: Yapfast Windows Scheduler
 
 on:
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: '7,22,37,52 * * * *'
   workflow_dispatch:
     inputs:
       force_build:
@@ -19,7 +19,54 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.detect.outputs.should_build }}
+    steps:
+      - name: Check upstream commits and Windows releases
+        id: detect
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.YAPFAST_TOKEN }}
+          FORCE_BUILD: ${{ inputs.force_build }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$FORCE_BUILD" == "true" ]]; then
+            echo "Forced build requested."
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          upstream_sha="$(gh api repos/yapfast/yapfast/commits/main --jq .sha)"
+          fork_sha="$(gh api repos/linjeremy670/yapfast/commits/main --jq .sha)"
+
+          if [[ "$upstream_sha" != "$fork_sha" ]]; then
+            echo "New upstream commit: $fork_sha -> $upstream_sha"
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          releases="$(gh api 'repos/linjeremy670/yapfast/releases?per_page=100')"
+          if jq -e --arg sha "$upstream_sha" '
+            any(.[];
+              (.tag_name | test("^windows-" + $sha + "-[0-9]+-[0-9]+$"))
+              and ([.assets[].name] | index("yapfast-windows-x64.exe") != null)
+              and ([.assets[].name] | index("SHA256SUMS") != null)
+            )
+          ' <<< "$releases" >/dev/null; then
+            echo "Commit $upstream_sha already has a complete Windows release."
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Commit $upstream_sha has no complete Windows release; building."
+          echo "should_build=true" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: check
+    if: needs.check.outputs.should_build == 'true'
     uses: linjeremy670/yapfast/.github/workflows/sync-and-build-windows-maybe-idk.yml@automation/windows-build
     with:
       force_build: ${{ inputs.force_build == true }}
