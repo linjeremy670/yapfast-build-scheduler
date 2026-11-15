@@ -92,8 +92,8 @@ def check_problems(data: dict) -> list[str]:
     problems = []
     if scheduled is None or scheduled["conclusion"] != "success":
         problems.append("Latest scheduled build check is missing or unsuccessful")
-    elif now - parse_utc(scheduled["created_at"]) > timedelta(hours=9):
-        problems.append("No scheduled build check started in the last nine hours")
+    elif now - parse_utc(scheduled["created_at"]) > timedelta(minutes=90):
+        problems.append("No scheduled build check started in the last 90 minutes")
     if not data["latest"] or data["main"] not in data["latest"]["tag_name"]:
         problems.append("Current fork main lacks a matching complete Windows release")
     for run in get_stale_runs(data["scheduler"] + data["yapfast"], now):
