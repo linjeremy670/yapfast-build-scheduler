@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import stat
+import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -60,6 +61,18 @@ def read_secret(path: Path) -> str | None:
     if stat.S_IMODE(path.stat().st_mode) & 0o077:
         raise PermissionError(f"{path}: expected file mode 0600")
     return path.read_text(encoding="utf-8").strip() or None
+
+
+def read_public_api_token() -> str | None:
+    """Use the existing read-only gh login without printing its credentials."""
+    try:
+        result = subprocess.run(
+            ["gh", "auth", "token"],
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return result.stdout.strip() or None if result.returncode == 0 else None
 
 
 def read_state() -> dict:
@@ -143,10 +156,15 @@ def maybe_alert(now: datetime, state: dict, sha: str, webhook: str | None) -> No
 
 def main() -> int:
     now = utc_now()
-    upstream = request_json(f"/repos/{UPSTREAM}/commits/main")["sha"]
-    fork = request_json(f"/repos/{FORK}/commits/main")["sha"]
-    releases = request_json(f"/repos/{FORK}/releases?per_page=100")
-    all_runs = request_json(f"/repos/{SCHEDULER}/actions/runs?per_page=30")["workflow_runs"]
+    token = read_secret(TOKEN_PATH)
+    webhook = read_secret(WEBHOOK_PATH)
+    api_token = read_public_api_token() or token
+    upstream = request_json(f"/repos/{UPSTREAM}/commits/main", api_token)["sha"]
+    fork = request_json(f"/repos/{FORK}/commits/main", api_token)["sha"]
+    releases = request_json(f"/repos/{FORK}/releases?per_page=100", api_token)
+    all_runs = request_json(
+        f"/repos/{SCHEDULER}/actions/runs?per_page=30", api_token
+    )["workflow_runs"]
     runs = scheduler_runs(all_runs)
     state = read_state()
     if state.get("upstream_sha") != upstream:
@@ -161,8 +179,6 @@ def main() -> int:
         state.pop("last_alert", None)
         state.pop("missing_webhook_warning", None)
 
-    token = read_secret(TOKEN_PATH)
-    webhook = read_secret(WEBHOOK_PATH)
     last_dispatch = parse_time(state.get("last_dispatch"))
     if should_dispatch(now, needs_build, runs, last_dispatch):
         if token:
