@@ -59,6 +59,10 @@ Then run:
     systemctl --user list-timers yapfast-fallback.timer
     journalctl --user -u yapfast-fallback.service -n 40 --no-pager
 
+Read-only GitHub API polling automatically reuses an existing GitHub CLI login,
+if available, to avoid low anonymous API rate limits. This login is never used
+for dispatch unless the separate PAT is explicitly provided.
+
 Without the PAT, the watchdog stays in read-only mode and logs that
 the fallback is not armed. An unrelated GitHub CLI account will not work
 without Actions-write permission on the scheduler repository.

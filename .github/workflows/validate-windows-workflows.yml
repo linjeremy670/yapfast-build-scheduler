@@ -16,6 +16,8 @@ on:
     paths:
       - '.github/workflows/**'
       - 'scripts/builder_health.py'
+      - 'scripts/yapfast_fallback.py'
+      - 'tests/**'
 
 permissions:
   contents: read
