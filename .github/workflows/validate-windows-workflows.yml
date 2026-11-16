@@ -9,6 +9,8 @@ on:
     paths:
       - '.github/workflows/**'
       - 'scripts/builder_health.py'
+      - 'scripts/yapfast_fallback.py'
+      - 'tests/**'
   pull_request:
     branches: [main]
     paths:
@@ -49,5 +51,8 @@ jobs:
             scheduler/.github/workflows/compare-windows-binaries.yml \
             scheduler/.github/workflows/builder-health.yml \
             yapfast/.github/workflows/sync-and-build-windows-maybe-idk.yml
-      - name: Compile-check health summary
-        run: python3 -m py_compile scheduler/scripts/builder_health.py
+      - name: Validate Python watchdog and monitoring tests
+        run: |
+          cd scheduler
+          python3 -m py_compile scripts/builder_health.py scripts/yapfast_fallback.py
+          python3 -m unittest discover -s tests -v
