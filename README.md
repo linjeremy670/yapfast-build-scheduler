@@ -1,24 +1,92 @@
 # Yapfast Windows build scheduler
 
-This repository owns the six-hour GitHub Actions schedule. It calls the reusable workflow on `linjeremy670/yapfast@automation/windows-build`. Yapfast's `main` stays identical to upstream.
+This repository checks upstream Yapfast and calls the reusable Windows builder
+in linjeremy670/yapfast on the automation/windows-build branch. The fork's
+main branch is only fast-forwarded to exact upstream commits. A build is skipped
+if a complete Windows release already exists for the current commit.
 
-## Required Actions secret
+## Scheduling and recovery
 
-Create a fine-grained GitHub personal access token scoped **only** to `linjeremy670/yapfast` with **Contents: Read and write** (for branch updates and releases), **Actions: Read and write** (for legacy artifact cleanup), and **Metadata: Read** (implicit). Store it as `YAPFAST_TOKEN` under **Settings → Secrets and variables → Actions** in this scheduler repository. Never commit the token.
+GitHub Actions cron is best-effort, not a guaranteed 15-minute timer.
+The windows.yml workflow supports schedule, workflow_dispatch and
+repository_dispatch with event type yapfast-fallback-check.
 
-Optional: store `DISCORD_WEBHOOK_URL` as an Actions secret to enable build notifications.
+The independent VPS watchdog (scripts/yapfast_fallback.py) uses a systemd
+user timer every five minutes. It checks upstream/fork SHAs, complete releases
+and active scheduler runs. It dispatches if the last check is older than
+20 minutes, or a build is needed and no check ran in the past 12 minutes.
+A 20-minute cooldown and active-run check prevent redundant queues.
 
-## Test
+If an upstream commit has gone more than an hour since first observation
+without a complete Windows release, the VPS watchdog can alert via Discord,
+with a six-hour per-commit cooldown. The GitHub-hosted health workflow also
+checks release freshness every 30 minutes; its alerts may be delayed by
+GitHub's cron delivery.
 
-Open **Actions → Yapfast Windows Scheduler → Run workflow**. First run should sync upstream into `automation/windows-build`, compile Windows x64 only if the commit lacks a release, then publish the executable and checksum in the Yapfast fork.
+## GitHub Actions secrets
 
-The workflow attempts to install LLVM 21.1.7. Check the first run's **Install LLVM 21 for Skia symbol isolation** step: the pinned Chocolatey version may need adjustment if it is unavailable on the runner.
+In this scheduler repository:
 
-A second run on the same upstream commit should skip compilation once a release with `yapfast-windows-x64.exe` exists.
+- YAPFAST_TOKEN: fine-grained token for linjeremy670/yapfast with Contents
+  read/write (for fork sync and releases) and Actions read/write (cleanup).
+- DISCORD_WEBHOOK_URL: optional release and builder health notifications.
 
-## Safety
+The scheduler's precheck uses its own read-only GITHUB_TOKEN.
+The fork write token is passed only to the reusable build workflow.
 
-- Never modify `linjeremy670/yapfast:main`; it must match `yapfast/yapfast:main`.
-- Keep custom workflow commits on `automation/windows-build`.
-- No force pushes in the scheduler.
-- Schedule: every six hours (UTC), subject to GitHub Actions scheduling delays.
+## Activate the independent VPS fallback
+
+Create a separate fine-grained PAT owned by an account with access to
+linjeremy670/yapfast-build-scheduler. Restrict it to that repository with
+Actions read/write and implicit Metadata read. Contents write is not required.
+
+As the catsnake user, install these files on the VPS:
+
+- scripts/yapfast_fallback.py to ~/.local/lib/yapfast-fallback/yapfast_fallback.py
+- systemd/yapfast-fallback.service to ~/.config/systemd/user/
+- systemd/yapfast-fallback.timer to ~/.config/systemd/user/
+
+Set the containing directory ~/.config/yapfast-fallback to mode 0700.
+Create ~/.config/yapfast-fallback/github-token with mode 0600, containing
+only the new dispatch PAT. Optionally create a mode-0600
+~/.config/yapfast-fallback/discord-webhook file with the Discord webhook URL.
+
+Then run:
+
+    systemctl --user daemon-reload
+    systemctl --user enable --now yapfast-fallback.timer
+    systemctl --user start yapfast-fallback.service
+    systemctl --user list-timers yapfast-fallback.timer
+    journalctl --user -u yapfast-fallback.service -n 40 --no-pager
+
+Without the PAT, the watchdog stays in read-only mode and logs that
+the fallback is not armed. An unrelated GitHub CLI account will not work
+without Actions-write permission on the scheduler repository.
+
+## Health and release safety
+
+- Syncs fork main to the exact upstream commit with fast-forward checks.
+- Checks releases before and after the Windows build queue.
+- Verifies the Windows executable SHA256 before publication.
+- Retains three complete Windows binary releases; old metadata may remain
+  as empty historical releases after executable assets have been pruned.
+- scripts/builder_health.py detects late scheduler checks, stalled jobs,
+  mismatched fork SHA and missing upstream release after one hour.
+- tests/test_builder_monitoring.py covers release and cooldown logic.
+- Validate Windows Workflows runs actionlint and Python unit tests.
+
+## Rust caching
+
+Cargo cache exact-key hit false does not imply a full miss: rust-cache can
+restore an older compatible dependency cache. Release diagnostics now make
+the exact-match distinction. LLVM and Skia binary caches are also used.
+
+The reusable Windows workflow supports opt-in enable_sccache, disabled by
+default, to compare compiler-cache statistics on a forced rebuild. Do not
+enable routinely until build duration and cache-quota impact are measured.
+
+## Manual recovery
+
+Open https://github.com/linjeremy670/yapfast-build-scheduler/actions/workflows/windows.yml
+and select Run workflow. Leave force_build disabled for a regular sync check,
+or enable it to rebuild an existing commit.

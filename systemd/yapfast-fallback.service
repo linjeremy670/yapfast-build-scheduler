@@ -1,0 +1,11 @@
+[Unit]
+Description=Yapfast independent GitHub Actions fallback and release watchdog
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 %h/.local/lib/yapfast-fallback/yapfast_fallback.py
+TimeoutStartSec=90
+NoNewPrivileges=true
+Environment=PYTHONDONTWRITEBYTECODE=1

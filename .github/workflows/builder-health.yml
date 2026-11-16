@@ -2,6 +2,7 @@ name: Daily Yapfast Builder Health
 
 on:
   schedule:
+    - cron: '3,33 * * * *'
     - cron: '15 9 * * *'
   workflow_dispatch:
   push:
@@ -9,6 +10,7 @@ on:
     paths:
       - '.github/workflows/builder-health.yml'
       - 'scripts/builder_health.py'
+      - 'scripts/yapfast_fallback.py'
 
 permissions:
   contents: read
@@ -28,4 +30,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          GITHUB_EVENT_SCHEDULE: ${{ github.event.schedule }}
         run: python3 scripts/builder_health.py

@@ -81,6 +81,8 @@ def collect_health(now: datetime) -> dict:
         "new_releases": sum(complete_windows_release(item) and parse_utc(item["published_at"]) >= cutoff for item in releases),
         "latest": max((item for item in releases if complete_windows_release(item)), key=lambda r: r["published_at"], default=None),
         "main": github_data(f"/repos/{YAPFAST}/branches/main")["commit"]["sha"],
+        "upstream": github_data("/repos/yapfast/yapfast/commits/main"),
+        "releases": releases,
         "cache": github_data(f"/repos/{SCHEDULER}/actions/cache/usage"),
         "artifacts": github_data(f"/repos/{SCHEDULER}/actions/artifacts?per_page=1")["total_count"],
     }
@@ -88,14 +90,35 @@ def collect_health(now: datetime) -> dict:
 
 def check_problems(data: dict) -> list[str]:
     now = data["now"]
-    scheduled = latest_scheduled_run(data["scheduler"])
     problems = []
-    if scheduled is None or scheduled["conclusion"] != "success":
-        problems.append("Latest scheduled build check is missing or unsuccessful")
-    elif now - parse_utc(scheduled["created_at"]) > timedelta(minutes=90):
-        problems.append("No scheduled build check started in the last 90 minutes")
-    if not data["latest"] or data["main"] not in data["latest"]["tag_name"]:
-        problems.append("Current fork main lacks a matching complete Windows release")
+    scheduler = [
+        run for run in data["scheduler"]
+        if run.get("path") == ".github/workflows/windows.yml"
+    ]
+    latest_check = max(scheduler, key=lambda run: run["created_at"], default=None)
+    if latest_check is None:
+        problems.append("No scheduler checks found")
+    elif now - parse_utc(latest_check["created_at"]) > timedelta(minutes=40):
+        problems.append("No Windows scheduler or fallback check in the last 40 minutes")
+    elif latest_check["status"] == "completed" and latest_check["conclusion"] != "success":
+        problems.append(f"Latest scheduler check failed: {latest_check['html_url']}")
+
+    upstream = data["upstream"]
+    upstream_sha = upstream["sha"]
+    commit_date = parse_utc(upstream["commit"]["committer"]["date"])
+    release_shas = {
+        RELEASE_TAG.fullmatch(release["tag_name"]).group(1)
+        for release in data["releases"]
+        if complete_windows_release(release)
+    }
+    if upstream_sha not in release_shas and now - commit_date > timedelta(hours=1):
+        problems.append(
+            f"No complete Windows release for upstream {upstream_sha[:8]} "
+            "more than one hour after its commit date"
+        )
+    if upstream_sha != data["main"] and now - commit_date > timedelta(hours=1):
+        problems.append(f"Fork main {data['main'][:8]} is behind upstream {upstream_sha[:8]}")
+
     for run in get_stale_runs(data["scheduler"] + data["yapfast"], now):
         if run["id"] != LEGACY_ORPHAN_RUN:
             problems.append(f"Queued for over 90 minutes: {run['html_url']}")
@@ -110,7 +133,7 @@ def report(data: dict, problems: list[str]) -> str:
     latest_sha = release["tag_name"].split("-")[1][:8] if release else "none"
     lines = [
         f"**Yapfast Windows builder: {status}** ({data['now']:%Y-%m-%d} UTC)",
-        f"Fork main: `{data['main'][:8]}` | Latest complete release: `{latest_sha}`",
+        f"Upstream: `{data['upstream']['sha'][:8]}` | Fork main: `{data['main'][:8]}` | Latest complete release: `{latest_sha}`",
         f"Past 24h: {counts['Yapfast Windows Scheduler']} scheduler checks, "
         f"{data['new_releases']} complete release(s), "
         f"{counts['Validate Windows Workflows']} validation(s), {len(failures)} failed run(s)",
@@ -153,9 +176,11 @@ def post_discord(message: str) -> None:
 
 def main() -> None:
     data = collect_health(datetime.now(timezone.utc))
-    message = report(data, check_problems(data))
+    problems = check_problems(data)
+    message = report(data, problems)
     publish_summary(message)
-    post_discord(message)
+    if problems or os.getenv("GITHUB_EVENT_SCHEDULE") == "15 9 * * *":
+        post_discord(message)
 
 
 if __name__ == "__main__":
