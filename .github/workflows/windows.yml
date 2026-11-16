@@ -15,6 +15,10 @@ on:
         description: Build even when the commit already has a Windows release
         type: boolean
         default: false
+      enable_sccache:
+        description: Test compiler-cache reuse (best with force_build)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -77,6 +81,7 @@ jobs:
     uses: linjeremy670/yapfast/.github/workflows/sync-and-build-windows-maybe-idk.yml@automation/windows-build
     with:
       force_build: ${{ inputs.force_build == true }}
+      enable_sccache: ${{ inputs.enable_sccache == true }}
     secrets:
       YAPFAST_TOKEN: ${{ secrets.YAPFAST_TOKEN }}
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
