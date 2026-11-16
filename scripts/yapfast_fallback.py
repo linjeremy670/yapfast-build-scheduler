@@ -72,7 +72,9 @@ def read_public_api_token() -> str | None:
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
-    return result.stdout.strip() or None if result.returncode == 0 else None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
 
 
 def read_state() -> dict:
