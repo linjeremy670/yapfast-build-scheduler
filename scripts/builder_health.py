@@ -43,7 +43,13 @@ def fresh_runs(runs: list[dict], cutoff: datetime) -> list[dict]:
 def complete_windows_release(release: dict) -> bool:
     if not RELEASE_TAG.fullmatch(release["tag_name"]):
         return False
-    return RELEASE_ASSETS.issubset({asset["name"] for asset in release["assets"]})
+    if release.get("draft"):
+        return False
+    assets = {
+        asset["name"] for asset in release.get("assets", [])
+        if asset.get("state", "uploaded") == "uploaded" and asset.get("size", 1) > 0
+    }
+    return RELEASE_ASSETS.issubset(assets)
 
 
 def get_latest_release() -> dict | None:
@@ -91,18 +97,6 @@ def collect_health(now: datetime) -> dict:
 def check_problems(data: dict) -> list[str]:
     now = data["now"]
     problems = []
-    scheduler = [
-        run for run in data["scheduler"]
-        if run.get("path") == ".github/workflows/windows.yml"
-    ]
-    latest_check = max(scheduler, key=lambda run: run["created_at"], default=None)
-    if latest_check is None:
-        problems.append("No scheduler checks found")
-    elif now - parse_utc(latest_check["created_at"]) > timedelta(minutes=40):
-        problems.append("No Windows scheduler or fallback check in the last 40 minutes")
-    elif latest_check["status"] == "completed" and latest_check["conclusion"] != "success":
-        problems.append(f"Latest scheduler check failed: {latest_check['html_url']}")
-
     upstream = data["upstream"]
     upstream_sha = upstream["sha"]
     commit_date = parse_utc(upstream["commit"]["committer"]["date"])
@@ -111,6 +105,20 @@ def check_problems(data: dict) -> list[str]:
         for release in data["releases"]
         if complete_windows_release(release)
     }
+    needs_build = upstream_sha != data["main"] or upstream_sha not in release_shas
+    scheduler = [
+        run for run in data["scheduler"]
+        if run.get("path") == ".github/workflows/windows.yml"
+    ]
+    latest_check = max(scheduler, key=lambda run: run["created_at"], default=None)
+    if latest_check is None:
+        if needs_build:
+            problems.append("No GitHub Windows checks found while a build is pending")
+    elif latest_check["status"] == "completed" and latest_check["conclusion"] != "success":
+        problems.append(f"Latest scheduler check failed: {latest_check['html_url']}")
+    elif needs_build and now - parse_utc(latest_check["created_at"]) > timedelta(minutes=45):
+        problems.append("No GitHub Windows check in 45 minutes while a build is pending")
+
     if upstream_sha not in release_shas and now - commit_date > timedelta(hours=1):
         problems.append(
             f"No complete Windows release for upstream {upstream_sha[:8]} "

@@ -23,7 +23,6 @@ REQUIRED_ASSETS = {"SHA256SUMS", "yapfast-windows-x64.exe"}
 STATE_PATH = Path.home() / ".local/state/yapfast-fallback/state.json"
 TOKEN_PATH = Path.home() / ".config/yapfast-fallback/github-token"
 WEBHOOK_PATH = Path.home() / ".config/yapfast-fallback/discord-webhook"
-MAX_CHECK_AGE = timedelta(minutes=20)
 RECENT_RUN_AGE = timedelta(minutes=12)
 DISPATCH_COOLDOWN = timedelta(minutes=20)
 ALERT_AGE = timedelta(hours=1)
@@ -116,13 +115,43 @@ def should_dispatch(
     runs: list[dict],
     last_dispatch: datetime | None,
 ) -> bool:
+    if not needs_build:
+        return False
     if any(run["status"] != "completed" for run in runs):
         return False
     if last_dispatch and now - last_dispatch < DISPATCH_COOLDOWN:
         return False
     latest = max((parse_time(run["created_at"]) for run in runs), default=None)
     age = now - latest if latest else timedelta(days=1)
-    return age >= (RECENT_RUN_AGE if needs_build else MAX_CHECK_AGE)
+    return age >= RECENT_RUN_AGE
+
+
+def public_json(path: str, token: str | None):
+    """Read public repository data without depending on a valid stored PAT."""
+    try:
+        return request_json(path, token)
+    except HTTPError as error:
+        if not token or error.code not in (401, 403):
+            raise
+        print("Read-only GitHub credential rejected; retrying anonymously.", file=sys.stderr)
+        return request_json(path)
+
+
+def dispatch_workflow(token: str) -> bool:
+    """Keep dispatch failures separate from healthy public monitoring."""
+    try:
+        request_json(
+            f"/repos/{SCHEDULER}/actions/workflows/windows.yml/dispatches",
+            token=token,
+            payload={"ref": "main", "inputs": {"force_build": "false"}},
+        )
+    except (HTTPError, URLError, TimeoutError) as error:
+        code = getattr(error, "code", None)
+        reason = f"GitHub HTTP {code}" if code else type(error).__name__
+        print(f"Fallback dispatch failed ({reason}); public monitoring continues.",
+              file=sys.stderr)
+        return False
+    return True
 
 
 def post_discord(webhook: str, content: str) -> None:
@@ -158,13 +187,21 @@ def maybe_alert(now: datetime, state: dict, sha: str, webhook: str | None) -> No
 
 def main() -> int:
     now = utc_now()
-    token = read_secret(TOKEN_PATH)
-    webhook = read_secret(WEBHOOK_PATH)
-    api_token = read_public_api_token() or token
-    upstream = request_json(f"/repos/{UPSTREAM}/commits/main", api_token)["sha"]
-    fork = request_json(f"/repos/{FORK}/commits/main", api_token)["sha"]
-    releases = request_json(f"/repos/{FORK}/releases?per_page=100", api_token)
-    all_runs = request_json(
+    try:
+        token = read_secret(TOKEN_PATH)
+    except PermissionError as error:
+        print(f"Dispatch credential inaccessible: {error}", file=sys.stderr)
+        token = None
+    try:
+        webhook = read_secret(WEBHOOK_PATH)
+    except PermissionError as error:
+        print(f"Optional alert destination inaccessible: {error}", file=sys.stderr)
+        webhook = None
+    api_token = read_public_api_token()
+    upstream = public_json(f"/repos/{UPSTREAM}/commits/main", api_token)["sha"]
+    fork = public_json(f"/repos/{FORK}/commits/main", api_token)["sha"]
+    releases = public_json(f"/repos/{FORK}/releases?per_page=100", api_token)
+    all_runs = public_json(
         f"/repos/{SCHEDULER}/actions/runs?per_page=30", api_token
     )["workflow_runs"]
     runs = scheduler_runs(all_runs)
@@ -181,16 +218,14 @@ def main() -> int:
         state.pop("last_alert", None)
         state.pop("missing_webhook_warning", None)
 
-    last_dispatch = parse_time(state.get("last_dispatch"))
-    if should_dispatch(now, needs_build, runs, last_dispatch):
+    last_attempt = parse_time(state.get("last_dispatch_attempt"))
+    if should_dispatch(now, needs_build, runs, last_attempt):
         if token:
-            request_json(
-                f"/repos/{SCHEDULER}/actions/workflows/windows.yml/dispatches",
-                token=token,
-                payload={"ref": "main", "inputs": {"force_build": "false"}},
-            )
-            state["last_dispatch"] = now.isoformat()
-            print("Dispatched Windows scheduler fallback.")
+            state["last_dispatch_attempt"] = now.isoformat()
+            if dispatch_workflow(token):
+                state["last_dispatch"] = now.isoformat()
+                state.pop("missing_token_warning", None)
+                print("Dispatched Windows scheduler fallback.")
         elif not state.get("missing_token_warning"):
             print(f"Fallback not armed: add a 0600 Actions-write token at {TOKEN_PATH}.",
                   file=sys.stderr)

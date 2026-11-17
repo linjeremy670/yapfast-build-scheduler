@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 from datetime import datetime, timedelta, timezone
 
 from scripts import builder_health as health
@@ -67,9 +68,24 @@ class BuilderHealthTests(unittest.TestCase):
         )
         self.assertEqual(issues, [])
 
-    def test_stale_scheduler_alerts(self):
-        issues = health.check_problems(health_snapshot(runs=[run(41)]))
-        self.assertTrue(any("No Windows scheduler" in issue for issue in issues))
+    def test_idle_builder_does_not_warn_about_delayed_github_cron(self):
+        self.assertEqual(health.check_problems(health_snapshot(runs=[run(90)])), [])
+
+    def test_pending_build_alerts_when_scheduler_is_stale(self):
+        issues = health.check_problems(health_snapshot(
+            commit_minutes_ago=30, releases=[], runs=[run(46)]
+        ))
+        self.assertTrue(any("No GitHub Windows check" in issue for issue in issues))
+
+    def test_no_scheduler_runs_only_warns_when_build_pending(self):
+        self.assertEqual(health.check_problems(health_snapshot(runs=[])), [])
+        issues = health.check_problems(health_snapshot(
+            commit_minutes_ago=30, releases=[], runs=[]
+        ))
+        self.assertTrue(any("No GitHub Windows checks found" in issue for issue in issues))
+
+    def test_empty_windows_asset_is_not_a_complete_release(self):
+        self.assertFalse(health.complete_windows_release(windows_release(exe_size=0)))
 
     def test_failed_latest_scheduler_alerts(self):
         issues = health.check_problems(
@@ -98,8 +114,8 @@ class FallbackTests(unittest.TestCase):
     def test_missing_build_triggers_after_twelve_minutes(self):
         self.assertTrue(fallback.should_dispatch(NOW, True, [run(13)], None))
 
-    def test_idle_schedule_triggers_after_twenty_minutes(self):
-        self.assertTrue(fallback.should_dispatch(NOW, False, [run(21)], None))
+    def test_idle_schedule_never_triggers_redundant_fallback(self):
+        self.assertFalse(fallback.should_dispatch(NOW, False, [run(120)], None))
 
     def test_active_build_prevents_duplicate(self):
         self.assertFalse(fallback.should_dispatch(
@@ -110,6 +126,29 @@ class FallbackTests(unittest.TestCase):
         self.assertFalse(fallback.should_dispatch(
             NOW, True, [run(45)], NOW - timedelta(minutes=10)
         ))
+
+    def test_stale_build_alert_obeys_six_hour_cooldown(self):
+        state = {"first_seen": (NOW - timedelta(hours=2)).isoformat()}
+        with patch.object(fallback, "post_discord") as send:
+            fallback.maybe_alert(NOW, state, SHA, "https://example.invalid/webhook")
+            fallback.maybe_alert(NOW + timedelta(hours=1), state, SHA,
+                                 "https://example.invalid/webhook")
+            self.assertEqual(send.call_count, 1)
+            fallback.maybe_alert(NOW + timedelta(hours=7), state, SHA,
+                                 "https://example.invalid/webhook")
+            self.assertEqual(send.call_count, 2)
+
+    def test_no_stale_build_alert_before_first_hour(self):
+        state = {"first_seen": (NOW - timedelta(minutes=59)).isoformat()}
+        with patch.object(fallback, "post_discord") as send:
+            fallback.maybe_alert(NOW, state, SHA, "https://example.invalid/webhook")
+            send.assert_not_called()
+
+    def test_no_webhook_does_not_mark_alert_delivered(self):
+        state = {"first_seen": (NOW - timedelta(hours=2)).isoformat()}
+        fallback.maybe_alert(NOW, state, SHA, None)
+        self.assertTrue(state["missing_webhook_warning"])
+        self.assertNotIn("last_alert", state)
 
 
 if __name__ == "__main__":

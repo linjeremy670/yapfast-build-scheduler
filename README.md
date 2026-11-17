@@ -13,8 +13,9 @@ repository_dispatch with event type yapfast-fallback-check.
 
 The independent VPS watchdog (scripts/yapfast_fallback.py) uses a systemd
 user timer every five minutes. It checks upstream/fork SHAs, complete releases
-and active scheduler runs. It dispatches if the last check is older than
-20 minutes, or a build is needed and no check ran in the past 12 minutes.
+and active scheduler runs. When a Windows build is needed and no scheduler check ran in the past 12
+minutes, it dispatches a fallback run. It never dispatches solely because
+GitHub cron is late while the current commit already has a complete release.
 A 20-minute cooldown and active-run check prevent redundant queues.
 
 If an upstream commit has gone more than an hour since first observation
@@ -74,8 +75,9 @@ without Actions-write permission on the scheduler repository.
 - Verifies the Windows executable SHA256 before publication.
 - Retains three complete Windows binary releases; old metadata may remain
   as empty historical releases after executable assets have been pruned.
-- scripts/builder_health.py detects late scheduler checks, stalled jobs,
-  mismatched fork SHA and missing upstream release after one hour.
+- scripts/builder_health.py detects late scheduler checks *when a build is
+  pending*, failed checks, stalled jobs, mismatched fork SHA and missing
+  upstream releases after one hour. Delayed idle cron runs are not warnings.
 - tests/test_builder_monitoring.py covers release and cooldown logic.
 - Validate Windows Workflows runs actionlint and Python unit tests.
 
